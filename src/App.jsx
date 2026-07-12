@@ -6,28 +6,29 @@ const CHECKWX_BASE = "https://api.checkwx.com/v2";
 
 const EXPERTS = ["RandomForest", "XGBoost"];
 
+// Bands in statute miles (US flight-category thresholds)
 const VFR_BANDS = [
   {
     label: "LIFR",
-    max: 800,
+    max: 1,
     active: "border-red-500 bg-red-500/10 text-red-400",
     inactive: "border-neutral-800 bg-neutral-900 text-neutral-600",
   },
   {
     label: "IFR",
-    max: 1600,
+    max: 3,
     active: "border-orange-500 bg-orange-500/10 text-orange-400",
     inactive: "border-neutral-800 bg-neutral-900 text-neutral-600",
   },
   {
     label: "MVFR",
-    max: 4800,
+    max: 5,
     active: "border-blue-500 bg-blue-500/10 text-blue-400",
     inactive: "border-neutral-800 bg-neutral-900 text-neutral-600",
   },
   {
     label: "VFR",
-    max: 10000,
+    max: 14,
     active: "border-green-500 bg-green-500/10 text-green-400",
     inactive: "border-neutral-800 bg-neutral-900 text-neutral-600",
   },
@@ -37,7 +38,7 @@ function getBand(v) {
   return VFR_BANDS.find((b) => v <= b.max) || VFR_BANDS[3];
 }
 
-function useCountUp(target, duration = 1000) {
+function useCountUp(target, duration = 1000, decimals = 1) {
   const [value, setValue] = useState(0);
   const frame = useRef(null);
   useEffect(() => {
@@ -47,7 +48,7 @@ function useCountUp(target, duration = 1000) {
     const animate = (now) => {
       const t = Math.min((now - start) / duration, 1);
       const eased = 1 - Math.pow(1 - t, 4);
-      setValue(Math.round(target * eased));
+      setValue(+(target * eased).toFixed(decimals));
       if (t < 1) frame.current = requestAnimationFrame(animate);
     };
     frame.current = requestAnimationFrame(animate);
@@ -56,26 +57,27 @@ function useCountUp(target, duration = 1000) {
   return value;
 }
 
-const celsiusDiffToFahr = (c) => +((c * 9) / 5).toFixed(1);
-
 function buildPayload(metar) {
   const now = new Date();
-  const temp = metar?.temperature?.celsius ?? null;
-  const dewpoint = metar?.dewpoint?.celsius ?? null;
-  const dewDep = temp !== null && dewpoint !== null ? temp - dewpoint : null;
+  // Work directly in °F — matches the training data (DRYBULBTEMPF, WETBULBTEMPF, DewPointTempF)
+  const tempF = metar?.temperature?.fahrenheit ?? null;
+  const dewpointF = metar?.dewpoint?.fahrenheit ?? null;
+  const dewDep =
+    tempF !== null && dewpointF !== null
+      ? +(tempF - dewpointF).toFixed(1)
+      : null;
   const wetBulbDep = dewDep !== null ? +(dewDep * 0.6).toFixed(1) : null;
 
   return {
-    StationPressure: metar?.pressure?.hg ?? null, // v2: pressure.hg (already inHg)
-    WindSpeed: metar?.wind?.speed?.kts ?? null, // v2: wind.speed.kts
-    WindDirection: metar?.wind?.degrees ?? null,
-    Precip: 0.0,
-    DewPointDepression: dewDep !== null ? celsiusDiffToFahr(dewDep) : null,
-    WetBulbDepression:
-      wetBulbDep !== null ? celsiusDiffToFahr(wetBulbDep) : null,
-    RelativeHumidity: metar?.humidity ?? null, // v2: humidity (plain int)
-    Visibility_Lag1: metar?.visibility?.meters ?? null,
-    Visibility_Trend: 0,
+    StationPressure: metar?.pressure?.hg ?? null, // inHg (matches dataset)
+    WindSpeed: metar?.wind?.speed?.mph ?? null, // v2: wind.speed.mph (dataset uses mph)
+    WindDirection: metar?.wind?.degrees ?? null, // degrees (0–360)
+    Precip: 0.0, // inches
+    DewPointDepression: dewDep, // °F
+    WetBulbDepression: wetBulbDep, // °F
+    RelativeHumidity: metar?.humidity ?? null, // % (v2: plain int)
+    Visibility_Lag1: metar?.visibility?.miles_float ?? null, // statute miles
+    Visibility_Trend: 0, // miles
     month: now.getUTCMonth() + 1,
     hour: now.getUTCHours(),
   };
@@ -86,120 +88,214 @@ function cxUrl(path) {
   return `${CHECKWX_BASE}${path}?x-api-key=${CHECKWX_KEY}`;
 }
 
-// ─── Hardcoded Indian airports ────────────────────────────────────────────────
-const INDIAN_AIRPORTS = [
+// ─── Hardcoded US airports ────────────────────────────────────────────────────
+const US_AIRPORTS = [
   {
-    icao: "VIDP",
-    name: "Indira Gandhi International Airport",
-    city: "New Delhi",
+    icao: "KATL",
+    name: "Hartsfield–Jackson Atlanta International Airport",
+    city: "Atlanta, GA",
   },
   {
-    icao: "VABB",
-    name: "Chhatrapati Shivaji Maharaj International Airport",
-    city: "Mumbai",
+    icao: "KLAX",
+    name: "Los Angeles International Airport",
+    city: "Los Angeles, CA",
   },
-  { icao: "VOMM", name: "Chennai International Airport", city: "Chennai" },
-  { icao: "VOBL", name: "Kempegowda International Airport", city: "Bengaluru" },
+  { icao: "KORD", name: "O'Hare International Airport", city: "Chicago, IL" },
   {
-    icao: "VECC",
-    name: "Netaji Subhas Chandra Bose International Airport",
-    city: "Kolkata",
+    icao: "KDFW",
+    name: "Dallas/Fort Worth International Airport",
+    city: "Dallas–Fort Worth, TX",
   },
+  { icao: "KDEN", name: "Denver International Airport", city: "Denver, CO" },
   {
-    icao: "VOHY",
-    name: "Rajiv Gandhi International Airport",
-    city: "Hyderabad",
+    icao: "KJFK",
+    name: "John F. Kennedy International Airport",
+    city: "New York, NY",
   },
+  { icao: "KLGA", name: "LaGuardia Airport", city: "New York, NY" },
   {
-    icao: "VAAH",
-    name: "Sardar Vallabhbhai Patel International Airport",
-    city: "Ahmedabad",
-  },
-  { icao: "VOGO", name: "Dabolim Airport", city: "Goa" },
-  { icao: "VOCL", name: "Calicut International Airport", city: "Kozhikode" },
-  { icao: "VOCI", name: "Cochin International Airport", city: "Kochi" },
-  {
-    icao: "VOTV",
-    name: "Trivandrum International Airport",
-    city: "Thiruvananthapuram",
-  },
-  { icao: "VOKN", name: "Kannur International Airport", city: "Kannur" },
-  { icao: "VOVZ", name: "Visakhapatnam Airport", city: "Visakhapatnam" },
-  { icao: "VOBZ", name: "Vijayawada Airport", city: "Vijayawada" },
-  {
-    icao: "VOTR",
-    name: "Tiruchirappalli International Airport",
-    city: "Tiruchirappalli",
+    icao: "KEWR",
+    name: "Newark Liberty International Airport",
+    city: "Newark, NJ",
   },
   {
-    icao: "VANP",
-    name: "Dr. Babasaheb Ambedkar International Airport",
-    city: "Nagpur",
-  },
-  { icao: "VAPO", name: "Pune Airport", city: "Pune" },
-  { icao: "VABP", name: "Raja Bhoj Airport", city: "Bhopal" },
-  { icao: "VASU", name: "Surat Airport", city: "Surat" },
-  { icao: "VABO", name: "Vadodara Airport", city: "Vadodara" },
-  { icao: "VEJP", name: "Jaipur International Airport", city: "Jaipur" },
-  {
-    icao: "VILK",
-    name: "Chaudhary Charan Singh International Airport",
-    city: "Lucknow",
+    icao: "KSFO",
+    name: "San Francisco International Airport",
+    city: "San Francisco, CA",
   },
   {
-    icao: "VIAR",
-    name: "Sri Guru Ram Dass Jee International Airport",
-    city: "Amritsar",
-  },
-  { icao: "VICG", name: "Chandigarh Airport", city: "Chandigarh" },
-  {
-    icao: "VIBN",
-    name: "Lal Bahadur Shastri International Airport",
-    city: "Varanasi",
+    icao: "KSEA",
+    name: "Seattle–Tacoma International Airport",
+    city: "Seattle, WA",
   },
   {
-    icao: "VIST",
-    name: "Sheikh ul-Alam International Airport",
-    city: "Srinagar",
+    icao: "KLAS",
+    name: "Harry Reid International Airport",
+    city: "Las Vegas, NV",
   },
-  { icao: "VIDN", name: "Jolly Grant Airport", city: "Dehradun" },
-  { icao: "VIUD", name: "Maharana Pratap Airport", city: "Udaipur" },
-  { icao: "VIJO", name: "Jodhpur Airport", city: "Jodhpur" },
-  { icao: "VIAG", name: "Agra Airport", city: "Agra" },
-  { icao: "VIAL", name: "Prayagraj Airport", city: "Prayagraj" },
+  { icao: "KMCO", name: "Orlando International Airport", city: "Orlando, FL" },
+  { icao: "KMIA", name: "Miami International Airport", city: "Miami, FL" },
   {
-    icao: "VEPT",
-    name: "Jay Prakash Narayan International Airport",
-    city: "Patna",
+    icao: "KCLT",
+    name: "Charlotte Douglas International Airport",
+    city: "Charlotte, NC",
   },
   {
-    icao: "VEBG",
-    name: "Biju Patnaik International Airport",
-    city: "Bhubaneswar",
+    icao: "KPHX",
+    name: "Phoenix Sky Harbor International Airport",
+    city: "Phoenix, AZ",
   },
-  { icao: "VEBD", name: "Bagdogra Airport", city: "Siliguri" },
-  { icao: "VEIM", name: "Imphal Airport", city: "Imphal" },
-  { icao: "VEMN", name: "Dibrugarh Airport", city: "Dibrugarh" },
-  { icao: "VEPU", name: "Agartala Airport", city: "Agartala" },
   {
-    icao: "VEPB",
-    name: "Veer Savarkar International Airport",
-    city: "Port Blair",
+    icao: "KIAH",
+    name: "George Bush Intercontinental Airport",
+    city: "Houston, TX",
   },
-  { icao: "VEGY", name: "Gaya Airport", city: "Gaya" },
-  { icao: "VOMY", name: "Mysore Airport", city: "Mysuru" },
-  { icao: "VOKU", name: "Hubli Airport", city: "Hubballi" },
-  { icao: "VOTX", name: "Tuticorin Airport", city: "Thoothukudi" },
-  { icao: "VEMR", name: "Dimapur Airport", city: "Dimapur" },
-  { icao: "VEGK", name: "Gorakhpur Airport", city: "Gorakhpur" },
-  { icao: "VEJH", name: "Jharsuguda Airport", city: "Jharsuguda" },
+  { icao: "KHOU", name: "William P. Hobby Airport", city: "Houston, TX" },
+  { icao: "KBOS", name: "Logan International Airport", city: "Boston, MA" },
+  {
+    icao: "KMSP",
+    name: "Minneapolis–Saint Paul International Airport",
+    city: "Minneapolis, MN",
+  },
+  {
+    icao: "KDTW",
+    name: "Detroit Metropolitan Wayne County Airport",
+    city: "Detroit, MI",
+  },
+  {
+    icao: "KPHL",
+    name: "Philadelphia International Airport",
+    city: "Philadelphia, PA",
+  },
+  {
+    icao: "KIAD",
+    name: "Washington Dulles International Airport",
+    city: "Washington, DC",
+  },
+  {
+    icao: "KDCA",
+    name: "Ronald Reagan Washington National Airport",
+    city: "Washington, DC",
+  },
+  {
+    icao: "KBWI",
+    name: "Baltimore/Washington International Airport",
+    city: "Baltimore, MD",
+  },
+  {
+    icao: "KSLC",
+    name: "Salt Lake City International Airport",
+    city: "Salt Lake City, UT",
+  },
+  {
+    icao: "KSAN",
+    name: "San Diego International Airport",
+    city: "San Diego, CA",
+  },
+  { icao: "KTPA", name: "Tampa International Airport", city: "Tampa, FL" },
+  {
+    icao: "KFLL",
+    name: "Fort Lauderdale–Hollywood International Airport",
+    city: "Fort Lauderdale, FL",
+  },
+  {
+    icao: "KAUS",
+    name: "Austin–Bergstrom International Airport",
+    city: "Austin, TX",
+  },
+  {
+    icao: "KSAT",
+    name: "San Antonio International Airport",
+    city: "San Antonio, TX",
+  },
+  {
+    icao: "KMDW",
+    name: "Chicago Midway International Airport",
+    city: "Chicago, IL",
+  },
+  {
+    icao: "KBNA",
+    name: "Nashville International Airport",
+    city: "Nashville, TN",
+  },
+  {
+    icao: "KSTL",
+    name: "St. Louis Lambert International Airport",
+    city: "St. Louis, MO",
+  },
+  {
+    icao: "KPDX",
+    name: "Portland International Airport",
+    city: "Portland, OR",
+  },
+  { icao: "KOAK", name: "Oakland International Airport", city: "Oakland, CA" },
+  {
+    icao: "KSJC",
+    name: "Norman Y. Mineta San José International Airport",
+    city: "San Jose, CA",
+  },
+  {
+    icao: "KSMF",
+    name: "Sacramento International Airport",
+    city: "Sacramento, CA",
+  },
+  {
+    icao: "KRDU",
+    name: "Raleigh–Durham International Airport",
+    city: "Raleigh, NC",
+  },
+  {
+    icao: "KCVG",
+    name: "Cincinnati/Northern Kentucky International Airport",
+    city: "Cincinnati, OH",
+  },
+  {
+    icao: "KCLE",
+    name: "Cleveland Hopkins International Airport",
+    city: "Cleveland, OH",
+  },
+  {
+    icao: "KCMH",
+    name: "John Glenn Columbus International Airport",
+    city: "Columbus, OH",
+  },
+  {
+    icao: "KPIT",
+    name: "Pittsburgh International Airport",
+    city: "Pittsburgh, PA",
+  },
+  {
+    icao: "KIND",
+    name: "Indianapolis International Airport",
+    city: "Indianapolis, IN",
+  },
+  {
+    icao: "KMCI",
+    name: "Kansas City International Airport",
+    city: "Kansas City, MO",
+  },
+  {
+    icao: "KMSY",
+    name: "Louis Armstrong New Orleans International Airport",
+    city: "New Orleans, LA",
+  },
+  {
+    icao: "KANC",
+    name: "Ted Stevens Anchorage International Airport",
+    city: "Anchorage, AK",
+  },
+  {
+    icao: "PHNL",
+    name: "Daniel K. Inouye International Airport",
+    city: "Honolulu, HI",
+  },
 ];
 
 // ─── Step 1: Airport selector ─────────────────────────────────────────────────
 function AirportSearch({ onSelect }) {
   const [search, setSearch] = useState("");
 
-  const filtered = INDIAN_AIRPORTS.filter((a) => {
+  const filtered = US_AIRPORTS.filter((a) => {
     const q = search.toLowerCase();
     return (
       a.name?.toLowerCase().includes(q) ||
@@ -218,7 +314,7 @@ function AirportSearch({ onSelect }) {
           Airport Visibility Predictor
         </h1>
         <p className="text-sm text-neutral-500 mt-1">
-          Select an Indian airport to fetch live weather and predict visibility.
+          Select a US airport to fetch live weather and predict visibility.
         </p>
       </div>
 
@@ -276,14 +372,14 @@ function ParamsReview({
 }) {
   const PARAM_LABELS = {
     StationPressure: { label: "Station Pressure", unit: "inHg" },
-    WindSpeed: { label: "Wind Speed", unit: "kts" },
+    WindSpeed: { label: "Wind Speed", unit: "mph" },
     WindDirection: { label: "Wind Direction", unit: "°" },
     Precip: { label: "Precipitation", unit: "in" },
     DewPointDepression: { label: "Dew Point Depression", unit: "°F" },
     WetBulbDepression: { label: "Wet Bulb Depression", unit: "°F" },
     RelativeHumidity: { label: "Relative Humidity", unit: "%" },
-    Visibility_Lag1: { label: "Current Visibility", unit: "m" },
-    Visibility_Trend: { label: "Visibility Trend", unit: "m" },
+    Visibility_Lag1: { label: "Current Visibility", unit: "mi" },
+    Visibility_Trend: { label: "Visibility Trend", unit: "mi" },
     month: { label: "Month", unit: "1–12" },
     hour: { label: "Hour (UTC)", unit: "0–23" },
   };
@@ -402,9 +498,9 @@ function ResultView({ result, airport, onReset }) {
             </p>
             <div className="flex items-baseline justify-center gap-3 mb-6">
               <span className="text-8xl font-normal text-white leading-none">
-                {displayed.toLocaleString()}
+                {displayed.toFixed(1)}
               </span>
-              <span className="text-3xl text-neutral-500">m</span>
+              <span className="text-3xl text-neutral-500">mi</span>
             </div>
             <div className="flex justify-center gap-3">
               {VFR_BANDS.map((b) => (
